@@ -141,7 +141,7 @@ class Connection(threading.Thread):
         return message
 
 
-    def preWrite(self, *args):
+    def preWrite(self, *args, **kwargs):
         """
         Function which will be called, being passed positional arguments from the write function.
 
