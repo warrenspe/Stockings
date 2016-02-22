@@ -1,7 +1,7 @@
 # Connection
-A Python2 (linux-only) implemented socket wrapper.
+A (linux-only) Python2 socket wrapper.
 
-TCP sockets offer developers the ability to send reliably delivered, ordered, and well-formed packets using sockets.  However one major usability issue that is often faced by developers is the need to manage the sending of data over a TCP socket to handle the following case:
+TCP sockets offer developers the ability to send reliably delivered, ordered, and well-formed packets using sockets.  However one major usability issue that developers often face is the need to manage the sending of data over a TCP socket to handle the following case:
 
 ```
 >>> bytesSent = sock.send("Message")
@@ -9,9 +9,9 @@ TCP sockets offer developers the ability to send reliably delivered, ordered, an
 4, 7
 ```
 
-In other words, the developer typically needs to use a loop each time they wish to send or receive data over a TCP socket.
+In other words, a loop is typically required each time data is sent or received over a TCP socket to ensure complete sending or retrieval of a message.
 
-`Connection` is a threaded [polling](https://docs.python.org/2/library/select.html#select.poll) class which allows developers to send complete messages to and from an endpoint, as long as it is also using a Connection to communicate.  Note that by default, Connections will prefix messages to be sent with the length of the message to receive.  While this is transparent to the programs using Connections, it means that they should not be used to communicate with endpoints not using a `Connection` socket wrapper.
+`Connection` is a threaded [polling](https://docs.python.org/2/library/select.html#select.poll) class wrapper which allows developers to send complete messages to and from an endpoint, as long as it is also using a Connection to communicate.  Note that by default, the raw messages sent using Connection will be prefixed with the length of the message being sent.  While this is transparent to the programs using Connections, it means that they should not be used to communicate with endpoints not using a `Connection` socket wrapper.
 
 ## Usage
 ### Initialization
@@ -23,13 +23,13 @@ import socket, connection
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 sock.connect(('127.0.0.1', 1234))
 
-# Creates a sock with a maximum message length of 65536, 2 byte headers appended to each message
+# Creates a socket with a maximum message length of 65536, 2 byte headers appended to each message
 conn = connection.Connection(sock)
 
-# Creates a sock with a maximum message length of 256, 1 byte headers appended to each message
+# Creates a socket with a maximum message length of 256, 1 byte headers appended to each message
 conn = connection.Connection(sock, 256)
 
-# Creates a sock with a maximum message length of 1024, 1 byte headers appended to each message
+# Creates a socket with a maximum message length of 1024, 2 byte headers appended to each message
 conn = connection.Connection(sock, maxMsgLen=1024)
 ```
 
@@ -78,9 +78,11 @@ class MyConnection(connection.Connection):
 ```
 
 #### handshake
-`Connection.handshake` is a function which will be called upon initialization of a Connection.  This function should return True if the handshake was a success, else False.  This function will be executed in its own thread and should accept no arguments.  It should interact with the remote by using `self._write` and `self._read` (Note that these bypass preWrite & postRead).  `self._write` accepts a single string argument which will be sent to the remote in its entirety, and `self._read` accepts no arguments and returns either None, or a complete message from the remote.
+`Connection.handshake` is a function which will be called upon initialization of a Connection.  This function should return True if the handshake was a success, else False.  By default, it simply returns True.  This function will be executed in its own thread and should accept no arguments.  It should interact with the remote by using `self._write` and `self._read` (Note that these bypass preWrite & postRead).  `self._write` accepts a single string argument which will be sent to the remote in its entirety, and `self._read` accepts no arguments and returns either None, or a complete message from the remote.
 
 Note that the thread which runs this function does not run as a daemon, and as such if looping is involved it should be aware of self.active.
+
+Finally, use of the connection by the process that created it will raise a connection.NotReady exception until the handshake completes.
 
 ```
 class MyConnection(connection.Connection):
