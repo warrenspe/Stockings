@@ -208,6 +208,10 @@ class Connection(threading.Thread):
         try:
             self.handshakeComplete = self.handshake()
 
+            # If the handshake failed, close the connection
+            if not self.handshakeComplete:
+                self.__signalClose()
+
         except:
             self.__signalClose()
             # Re raise the original exception
