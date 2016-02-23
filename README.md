@@ -23,13 +23,13 @@ import socket, connection
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 sock.connect(('127.0.0.1', 1234))
 
-# Creates a socket with a maximum message length of 65536, 2 byte headers appended to each message
+# Creates a Connection with a maximum message length of 65536, 2 byte headers appended to each message
 conn = connection.Connection(sock)
 
-# Creates a socket with a maximum message length of 256, 1 byte headers appended to each message
+# Creates a Connection with a maximum message length of 256, 1 byte headers appended to each message
 conn = connection.Connection(sock, 256)
 
-# Creates a socket with a maximum message length of 1024, 2 byte headers appended to each message
+# Creates a Connection with a maximum message length of 1024, 2 byte headers appended to each message
 conn = connection.Connection(sock, maxMsgLen=1024)
 ```
 
@@ -51,7 +51,7 @@ On the other end, the endpoint's `Connection` has a `read` function (accepting n
 Subclasses of `Connection` can override the following functions to modify functionality:
 
 #### preWrite
-`Connection.write` can accept any number of positional arguments and keyword arguments.  These will be passed to `Connection.preWrite`, and then the result of that function will be sent to the endpoint.  `Connection.preWrite` is expected to return a string.  By default, `Connection.preWrite` returns the first keyword argument passed (which allows `Connection.write("Test Message")` to work).  However, preWrite can be overridden to format the string to send.  For example
+`Connection.write` can accept any number of positional arguments and keyword arguments.  These will be passed to `Connection.preWrite`, and then the result of that function will be sent to the endpoint.  `Connection.preWrite` is expected to return a string.  By default, `Connection.preWrite` returns the first positional argument passed (which allows `Connection.write("Test Message")` to work).  However, preWrite can be overridden to format the string to send.  For example
 
 ```
 class MyConnection(connection.Connection):
