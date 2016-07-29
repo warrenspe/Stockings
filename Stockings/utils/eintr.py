@@ -19,15 +19,34 @@
     Email:  warrenspencer27@gmail.com
 """
 
-import errno
+import errno, socket
 
 # Because in python3, (pre 3.5) interrupted system calls raise Exceptions, we want to be able to run
 # system calls without worrying about them being interrupted.
-def run(func, *args, **kwargs):
+
+# We also deal with operations on closed sockets, or sockets which have no data waiting for them.
+MASKED_ERRORS = (
+    "EAGAIN",
+    "WSAEWOULDBLOCK",
+    "EWOULDBLOCK",
+    "ENOTSOCK"
+)
+
+def recv(sock, bytes):
+    """
+    Receives data from the given socket, masking socket-closed, and EAGAIN errors (returning None in this case).
+    Also repeatedly runs the command if it is interrupted by another system call.
+
+    Returns: The bytes read if successful, else None if we were unable to read from the socket.
+    """
+
     while True:
         try:
-            return func(*args, **kwargs)
+            return sock.recv(bytes)
 
-        except IOError as e:
-            if e.errno != errno.EINTR:
-                raise
+        except (IOError, socket.error) as e:
+            if e.errno == errno.EINTR:
+                continue
+            if errno.errorcode[e.errno] in MASKED_ERRORS:
+                return
+            raise

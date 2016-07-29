@@ -1,7 +1,0 @@
-attempt to send immediately on write using a mutex in selectstocking
-
-See if third select list means anything
-
-test both modules
-
-_Stocking docstring

@@ -100,3 +100,7 @@ class MyConnection(connection.Connection):
         
     return False
 ```
+
+
+
+TESTED ON 3.4, 3.5, 2.7

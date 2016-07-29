@@ -20,7 +20,7 @@
 """
 
 # Standard imports
-import unittest, socket, time, os
+import unittest, socket, time, os, select
 
 os.environ['STOCKING_SELECT_SEND_INTERVAL'] = '0'
 
@@ -39,6 +39,7 @@ class StockingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.serverSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        cls.serverSocket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         cls.serverSocket.bind((SOCKET_IP, SOCKET_PORT))
         cls.serverSocket.listen(1)
 
@@ -76,10 +77,7 @@ class StockingTests(unittest.TestCase):
         time.sleep(.5)
 
         self.assertFalse(self.serverConn.active)
-        self.assertFalse(self.serverConn.isAlive())
-
         self.assertFalse(self.clientConn.active)
-        self.assertFalse(self.clientConn.isAlive())
 
     def testSerializeMessageLength(self):
         messageLength = self.clientConn._messageLength
@@ -144,11 +142,11 @@ class StockingTests(unittest.TestCase):
         while not (self.serverConn.handshakeComplete and self.clientConn.handshakeComplete):
             pass
 
-        msg = 'a' * 2**16
+        msg = 'a' * 2**24
         self.serverConn.write(msg)
 
         start = time.time()
-        while self.serverConn._oBuffer and time.time() - start < 5:
+        while not self.clientConn._parentIn.poll() and time.time() - start < 15:
             pass
 
         time.sleep(1)
@@ -208,7 +206,10 @@ def main():
         loader = unittest.TestLoader()
         pollTests = loader.loadTestsFromTestCase(PollTests)
         selectTests = loader.loadTestsFromTestCase(SelectTests)
-        suite = unittest.TestSuite([pollTests, selectTests])
+        tests = [pollTests, selectTests]
+        if not hasattr(select, 'poll'):
+            tests.pop(0)
+        suite = unittest.TestSuite(tests)
         unittest.TextTestRunner().run(suite)
 
 if __name__ == '__main__':

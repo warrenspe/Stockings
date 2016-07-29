@@ -20,14 +20,12 @@
 """
 
 # Standard imports
-import socket, errno, threading, select, math, multiprocessing, errno
+import socket, errno, threading, select
 
 # Project imports
-from .utils import MessageLength, eintr
-from .exceptions import notReady
+from ._Stocking import _Stocking
 
-
-class PollStocking(threading.Thread):
+class PollStocking(_Stocking):
     """
     Class which handles a connection with a remote endpoint.  Runs as a thread and can be interfaced with
     by using its `read` and `write` functions to read and write complete messages to a remote endpoint.
@@ -35,296 +33,21 @@ class PollStocking(threading.Thread):
     Uses the select.poll construct to manage its pipes/sockets I/O.
     """
 
-    # Publically visible attributes
-    sock = None               # The connection to the remote
-    addr = None               # The address of the remote
-    handshakeComplete = False # A boolean indicating whether or not this connection is ready for interaction with the remote
-    active = True             # Flag which signals whether this thread is supposed to be running or not
-
     # Internal attributes
     _poller = None            # select.poll object used to manage I/O activity.
-    _iBuffer = b""            # Partial message received from the remote that require further recv's to complete
-    _iBufferLen = None        # Length of the message we're currently receiving into self._iBuffer
-    _messageLength = None     # MessageLength object used when constructing _iBufferLen
-    _oBuffer = ""             # Partial message sent to the remote that require further send's to complete
-    _parentOut = None         # Pipe which our parent process will read from
-    _parentIn = None          # Pipe which our parent process will write to
-    _usIn = None              # Pipe which we will read from
-    _usOut = None             # Pipe which we will write to
-    _closeLock = None         # Mutex to prevent us from closing pipes at the same time
 
-    def __init__(self, conn):
-        """
-        Creates a new connection, wrapping the given connected socket.
-
-        Inputs: conn - A connected socket.
-        """
-
-        threading.Thread.__init__(self)
-        self.sock = conn
-        self.addr = self.sock.getpeername()
-        self._messageLength = MessageLength.MessageLength()
-
-        # We cannot run in blocking mode, because at any given time we may be in the process of sending a message to
-        # the remote and receiving a message from the remote.  We cannot get stuck in one phase or the other.
-        self.sock.setblocking(0)
-
-        # Create two unidirectional pipes for communicating with our parent process
-        self._parentIn, self._usOut = multiprocessing.Pipe(False)
-        self._usIn, self._parentOut = multiprocessing.Pipe(False)
-
-        self._closeLock = threading.Lock()
-
-        # Start processing requests
-        self.daemon = True
-        self.start()
-
-    # Data Model functions
-    def __repr__(self):
-        return "<Stocking (Poll) [%s]>" % str(self.addr)
-
-
-    def __enter__(self):
-        return self
-
-
-    def __exit__(self, typ, value, tb):
-        self.close()
-
-
-    # API functions
-    def read(self):
-        """
-        Returns a message from _parentIn if there is one and we've completed our handshake, else None.
-
-        Raises a NotReady Exception if the handshake has not yet completed.
-        """
-
-        if not self.handshakeComplete:
-            raise notReady.NotReady()
-
-        toReturn = self._read()
-        if toReturn is not None:
-            return self.postRead(toReturn)
-
-
-    def write(self, *args, **kwargs):
-        """
-        Queues a message to send to the remote if we've completed our handshake.
-
-        Raises a NotReady Exception if the handshake has not yet completed.
-        """
-
-        if not self.handshakeComplete:
-            raise notReady.NotReady()
-
-        self._write(self.preWrite(*args, **kwargs))
-
-
-    def fileno(self):
-        """ Returns a file descriptor which the parent process can poll on, to wake when there is input to be read. """
-
-        return self._parentIn.fileno()
-
-
-    def close(self):
-        """ Kills our connection and immediately halts the thread. """
-
-        self.__signalClose()
-        if not self._parentIn.closed:
-            self._parentIn.close()
-
-
-    # Subclassable functions
-    def handshake(self):
-        """
-        Function which performs a handshake with the remote connection connecting to us.
-
-        Inputs: None.
-
-        Outputs: A boolean indicating whether or not the handshake completed successfully.
-
-        Notes:
-            * Should set whatever instance attributes are required by the calling program onto self.
-            * Can and should use the _read and _write functions for interacting with the remote. (not read/write)
-              Note that this will bypass the preWrite and postRead functions.
-            * Should be aware of self.active if looping is used.
-        """
-
-        return True
-
-
-    def postRead(self, message):
-        """
-        Function which will be called, being passed a complete message from the remote.
-
-        The output of this function will be returned from all read calls.
-        """
-
-        return message
-
-
-    def preWrite(self, *args, **kwargs):
-        """
-        Function which will be called, being passed positional arguments from the write function.
-
-        When not overridden, accepts any number of arguments and returns the first argument passed.
-
-        Outputs: A string which will be the message which is sent to the remote.
-        """
-
-        return args[0]
-
-
-    # Visible Internal functions
-    def _read(self):
-        """
-        Function implementing the logic for receiving a message from the remote.
-
-        Should only be called by this object, and only when performing a handshake with the remote.
-
-        Returns the message received from the remote if there is one, else None.
-        """
-
-        if self.active and not self._parentIn.closed and self._parentIn.poll():
-            return self._parentIn.recv()
-
-
-    def _write(self, msg):
-        """
-        Function implementing the logic for sending a message to the host.
-
-        Should only be called by this object, and only when performing a handshake with the remote.
-        """
-
-        if self.active and len(msg):
-            if type(msg) != bytes:
-                msg = msg.encode('utf8')
-            self._parentOut.send(self._messageLength.serialize(len(msg)) + msg)
-
-
-    # Hidden Internal functions
-    def __signalClose(self):
-        """
-        Should only be called by this thread.  Signals to any parent process polling on self.fileno() that we have closed.
-
-        The parent process should still call close to close the other ends of the pipes.
-        """
-
-        self._closeLock.acquire()
-        try:
-            if self.active:
-                self.active = False
-                # Only close parentOut; leave parentIn open.  If we're closing for reasons other than our parent telling us to
-                # close, by leaving parentIn open we allow it to consume any potential remaining messages.
-                if not self._parentOut.closed:
-                    self._parentOut.close()
-                if not self._usOut.closed:
-                    self._usOut.close()
-                if not self._usIn.closed:
-                    self._usIn.close()
-                self.sock.close()
-        finally:
-            self._closeLock.release()
-
-
-    def __handshake(self):
-        """
-        Calls any subclassed handshake function, setting handshakeComplete upon completion, or closing
-        this connection on failure.
-        """
-
-        try:
-            self.handshakeComplete = self.handshake()
-
-            # If the handshake failed, close the connection
-            if not self.handshakeComplete:
-                self.__signalClose()
-
-        except:
-            self.__signalClose()
-            # Re raise the original exception
-            raise
-
-
-    def __recvMessage(self):
-        """
-        Attempts to receive a message from our remote endpoint into self._iBuffer.
-
-        Returns True if we successfully received any bytes from the remote, else False.
-        """
-
-        retval = False
-
-        try:
-            # If self._iBufferLen is 0 we need to recv a completed size header field
-            # to determine the length of our next incoming message
-            while not self._iBufferLen:
-                # Attempt to read a byte from the socket
-                byteRead = eintr.run(self.sock.recv, 1)
-
-                # If we read no bytes, return False to indicate as such
-                if not byteRead:
-                    return retval
-
-                # Since we've read a byte, we will return True
-                retval = True
-
-                # Run what we just read through our MessageLength object
-                if self._messageLength.deserialize(byteRead):
-                    # If it returned True, we've received the message size header in its entirety.
-                    self._iBufferLen = self._messageLength.get()
-                    self._messageLength.reset()
-                    break
-
-            while len(self._iBuffer) != self._iBufferLen:
-                # Attempt to recv our next incoming message into self._iBuffer
-                bytesRead = eintr.run(self.sock.recv, self._iBufferLen - len(self._iBuffer))
-                if not bytesRead:
-                    break
-                retval = True
-                self._iBuffer += bytesRead
-
-            # If we've completed the message in self._iBuffer, write it to self._usOut so it
-            # can be read from self._parentIn by the parent process
-            if len(self._iBuffer) == self._iBufferLen:
-                self._usOut.send(self._iBuffer.decode('utf8'))
-                self._iBuffer = b""
-                self._iBufferLen = 0
-
-        except socket.error as e:
-            # Only mask EAGAIN errors
-            if e.errno != errno.EAGAIN:
-                raise e
-
-        return retval
-
-
-    def __sendMessage(self):
+    def _pollSendMessage(self):
         """ Attempts to send a message to our remote endpoint from self._oBuffer. """
 
-        # If we have no remaining bytes to send from self._oBuffer, try to move a message over from self.iBuffer
-        if not len(self._oBuffer) and self._usIn.poll():
-            self._oBuffer = self._usIn.recv()
+        self._sendMessage()
 
-        # If we have any bytes in self._oBuffer to send, attempt to do so now
+        # If we were unable to write the entirety of the message to the socket, poll on it being writeable
         if len(self._oBuffer):
-            try:
-                bytesSent = self.sock.send(self._oBuffer)
-                self._oBuffer = self._oBuffer[bytesSent:]
+            self._poller.register(self.sock, select.POLLIN | select.POLLOUT)
 
-                # If we were unable to write the entirety of the message to the socket, poll on it being writeable
-                if len(self._oBuffer):
-                    self._poller.register(self.sock, select.POLLIN | select.POLLOUT)
-
-                # Otherwise self._oBuffer is empty; disable polling on our socket being writeable
-                else:
-                    self._poller.register(self.sock, select.POLLIN)
-
-            except socket.error as e:
-                # Only mask EAGAIN errors
-                if e.errno != errno.EAGAIN:
-                    raise e
+        # Otherwise self._oBuffer is empty; disable polling on our socket being writeable
+        else:
+            self._poller.register(self.sock, select.POLLIN)
 
 
     # Threading.Thread override
@@ -332,13 +55,18 @@ class PollStocking(threading.Thread):
 
         try:
             # Start a new thread to handle connecting to the remote
-            handshakeThread = threading.Thread(target=self.__handshake)
+            handshakeThread = threading.Thread(target=self._handshake)
             handshakeThread.start()
 
-            self._poller = select.poll()
-            self._poller.register(self._parentIn, select.POLLHUP) # Detect if we've been closed by our parent
-            self._poller.register(self.sock, select.POLLIN)       # Detect messages to recv from the remote endpoint
-            self._poller.register(self._usIn, select.POLLIN)      # Detect messages to send from our parent
+            with self._ioLock:
+                if self.active:
+                    self._poller = select.poll()
+                    # Detect if we've been closed by our parent
+                    self._poller.register(self._parentIn, select.POLLHUP)
+                    # Detect messages to recv from the remote endpoint
+                    self._poller.register(self.sock, select.POLLIN)
+                    # Detect messages to send from our parent
+                    self._poller.register(self._usIn, select.POLLIN)
 
             while self.active:
                 # Wait until we have input or output to act upon
@@ -349,16 +77,16 @@ class PollStocking(threading.Thread):
                         if self.sock.fileno() == fd:
                             # If our connected socket to the remote is in the list of readable sockets we expect that
                             # we can read from it; if for some reason we cannot we can assume we have become disconnected.
-                            if not self.__recvMessage():
+                            if not self._recvMessage():
                                 return
 
                         # Otherwise check if our parent sent us data
                         elif not self._usIn.closed and self._usIn.fileno() == fd:
-                            self.__sendMessage()
+                            self._pollSendMessage()
 
                     # eventmask will be POLLOUT if we can continue sending data from self._oBuffer
                     elif eventMask & select.POLLOUT:
-                        self.__sendMessage()
+                        self._pollSendMessage()
 
                     # Otherwise check if our parent has asked us to close
                     elif eventMask & select.POLLHUP:
@@ -375,4 +103,4 @@ class PollStocking(threading.Thread):
                 raise
 
         finally:
-            self.__signalClose()
+            self._signalClose()

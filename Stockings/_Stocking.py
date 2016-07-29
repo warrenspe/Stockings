@@ -20,7 +20,7 @@
 """
 
 # Standard imports
-import socket, errno, threading, select, math, multiprocessing, os, errno
+import socket, errno, threading, multiprocessing
 
 # Project imports
 from .utils import MessageLength, eintr
@@ -37,7 +37,7 @@ class _Stocking(threading.Thread):
 
     # Internal attributes
     _iBuffer = b""            # Partial message received from the remote that require further recv's to complete
-    _iBufferLen = None        # Length of the message we're currently receiving into self._iBuffer
+    _iBufferLen = 0           # Length of the message we're currently receiving into self._iBuffer
     _messageLength = None     # MessageLength object used when constructing _iBufferLen
     _oBuffer = ""             # Partial message sent to the remote that require further send's to complete
     _parentOut = None         # Pipe which our parent process will read from
@@ -66,7 +66,7 @@ class _Stocking(threading.Thread):
         self._parentIn, self._usOut = multiprocessing.Pipe(False)
         self._usIn, self._parentOut = multiprocessing.Pipe(False)
 
-        self._ioLock = threading.Lock()
+        self._ioLock = threading.RLock()
 
         # Start processing requests
         self.daemon = True
@@ -118,19 +118,19 @@ class _Stocking(threading.Thread):
     def fileno(self):
         """ Returns a file descriptor which the parent process can poll on, to wake when there is input to be read. """
 
-        return self.__runLocked(self._parentIn.fileno)
+        return self._runLocked(self._parentIn.fileno)
 
 
     def close(self):
         """ Kills our connection and immediately halts the thread. """
 
-        def _close(self):
+        def __close(self):
             if self.active:
-                self.__signalClose()
+                self._signalClose()
                 if not self._parentIn.closed:
                     self._parentIn.close()
 
-        self.__runLocked(_close, self)
+        self._runLocked(__close, self)
 
 
     # Subclassable functions
@@ -174,7 +174,6 @@ class _Stocking(threading.Thread):
         return args[0]
 
 
-    # Visible Internal functions
     def _read(self):
         """
         Function implementing the logic for receiving a message from the remote.
@@ -184,7 +183,7 @@ class _Stocking(threading.Thread):
         Returns the message received from the remote if there is one, else None.
         """
 
-        return self.__recvPipe(self._parentIn)
+        return self._recvPipe(self._parentIn)
 
 
     def _write(self, msg):
@@ -200,36 +199,32 @@ class _Stocking(threading.Thread):
 
             msg = self._messageLength.serialize(len(msg)) + msg
 
-            self.__sendPipe(self._parentOut, msg)
+            if not self._parentOut.closed:
+                self._parentOut.send(msg)
 
 
-    # Hidden Internal functions
-    def __recvPipe(self, pipe):
+    def _recvPipe(self, pipe):
         """
         Receives from a pipe, ensuring that it can be read from.
         Returns whatever the pipe has returned if possible, else None if it is not possible.
         """
 
         def __recvPipe(pipe):
-            if not pipe.closed and pipe.poll():
+            if self._checkReadablePipe(pipe):
                 return pipe.recv()
 
-        return self.__runLocked(__recvPipe, pipe)
+        return self._runLocked(__recvPipe, pipe)
 
 
-    def __sendPipe(self, pipe, data):
+    def _checkReadablePipe(self, pipe):
         """
-        Data over a pipe, ensuring that it can be used first.
+        Checks if a readable pipe has data to be read.  Returns True if so, else False.
         """
 
-        def __sendPipe(pipe, data):
-            if not pipe.closed:
-                pipe.send(data
-
-        self.__runLocked(__sendPipe, pipe, data)
+        return self._runLocked(lambda: not pipe.closed and pipe.poll())
 
 
-    def __runLocked(self, func, *args, **kwargs):
+    def _runLocked(self, func, *args, **kwargs):
         """
         Runs a function, wrapping it in acquire/release calls to our ioLock.  Returns whatever it returns.
         """
@@ -238,14 +233,14 @@ class _Stocking(threading.Thread):
             return func(*args, **kwargs)
 
 
-    def __signalClose(self):
+    def _signalClose(self):
         """
         Should only be called by this thread.  Signals to any parent process polling on self.fileno() that we have closed.
 
         The parent process should still call close to close the other ends of the pipes.
         """
 
-        def __signalClose(self)
+        def __signalClose(self):
             if self.active:
                 self.active = False
                 # Only close parentOut; leave parentIn open.  If we're closing for reasons other than our parent telling
@@ -256,12 +251,13 @@ class _Stocking(threading.Thread):
                     self._usOut.close()
                 if not self._usIn.closed:
                     self._usIn.close()
+                self.sock.shutdown(socket.SHUT_RDWR)
                 self.sock.close()
 
-        self.__runLocked(__signalClose, self)
+        self._runLocked(__signalClose, self)
 
 
-    def __handshake(self):
+    def _handshake(self):
         """
         Calls any subclassed handshake function, setting handshakeComplete upon completion, or closing
         this connection on failure.
@@ -272,15 +268,15 @@ class _Stocking(threading.Thread):
 
             # If the handshake failed, close the connection
             if not self.handshakeComplete:
-                self.__signalClose()
+                self._signalClose()
 
         except:
-            self.__signalClose()
+            self._signalClose()
             # Re raise the original exception
             raise
 
 
-    def __recvMessage(self):
+    def _recvMessage(self):
         """
         Attempts to receive a message from our remote endpoint into self._iBuffer.
 
@@ -294,7 +290,7 @@ class _Stocking(threading.Thread):
             # to determine the length of our next incoming message
             while not self._iBufferLen:
                 # Attempt to read a byte from the socket
-                byteRead = eintr.run(self.sock.recv, 1)
+                byteRead = eintr.recv(self.sock, 1)
 
                 # If we read no bytes, return False to indicate as such
                 if not byteRead:
@@ -312,7 +308,7 @@ class _Stocking(threading.Thread):
 
             while len(self._iBuffer) != self._iBufferLen:
                 # Attempt to recv our next incoming message into self._iBuffer
-                bytesRead = eintr.run(self.sock.recv, self._iBufferLen - len(self._iBuffer))
+                bytesRead = eintr.recv(self.sock, self._iBufferLen - len(self._iBuffer))
                 if not bytesRead:
                     break
                 retval = True
@@ -321,24 +317,25 @@ class _Stocking(threading.Thread):
             # If we've completed the message in self._iBuffer, write it to self._usOut so it
             # can be read from self._parentIn by the parent process
             if len(self._iBuffer) == self._iBufferLen:
-                self.__sendPipe(self._usOut, self._iBuffer.decode('utf8'))
+                if not self._usOut.closed:
+                    self._usOut.send(self._iBuffer.decode('utf8'))
                 self._iBuffer = b""
                 self._iBufferLen = 0
 
         except socket.error as e:
             # Only mask EAGAIN errors
             if e.errno != errno.EAGAIN:
-                raise e
+                raise
 
         return retval
 
 
-    def __sendMessage(self):
+    def _sendMessage(self):
         """ Attempts to send a message to our remote endpoint from self._oBuffer. """
 
         # If we have no remaining bytes to send from self._oBuffer, try to move a message over from self.iBuffer
         if not len(self._oBuffer):
-            self._oBuffer =  self.__recvPipe(self._usIn) or b''
+            self._oBuffer =  self._recvPipe(self._usIn) or b''
 
         # If we have any bytes in self._oBuffer to send, attempt to do so now
         if len(self._oBuffer):
@@ -349,7 +346,7 @@ class _Stocking(threading.Thread):
             except socket.error as e:
                 # Only mask EAGAIN errors
                 if e.errno != errno.EAGAIN:
-                    raise e
+                    raise
 
 
     # Subclass Overrides
