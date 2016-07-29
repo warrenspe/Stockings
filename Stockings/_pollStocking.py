@@ -1,18 +1,18 @@
 """
-    This file is part of Connection.
+    This file is part of Stockings.
 
-    Connection is free software: you can redistribute it and/or modify
+    Stockings is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
     (at your option) any later version.
 
-    Connection is distributed in the hope that it will be useful,
+    Stockings is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
 
     You should have received a copy of the GNU General Public License
-    along with Connection.  If not, see <http://www.gnu.org/licenses/>.
+    along with Stockings.  If not, see <http://www.gnu.org/licenses/>.
 
 
     Author: Warren Spencer
@@ -20,15 +20,19 @@
 """
 
 # Standard imports
-import socket, errno, threading, select, math, multiprocessing
+import socket, errno, threading, select, math, multiprocessing, errno
 
-class NotReady(Exception):
-    """ Error raised when read/write operations are performed on a connection which has not yet finished its handshake. """
+# Project imports
+from .utils import MessageLength, eintr
+from .exceptions import notReady
 
-class Connection(threading.Thread):
+
+class PollStocking(threading.Thread):
     """
     Class which handles a connection with a remote endpoint.  Runs as a thread and can be interfaced with
     by using its `read` and `write` functions to read and write complete messages to a remote endpoint.
+
+    Uses the select.poll construct to manage its pipes/sockets I/O.
     """
 
     # Publically visible attributes
@@ -39,40 +43,37 @@ class Connection(threading.Thread):
 
     # Internal attributes
     _poller = None            # select.poll object used to manage I/O activity.
-    _headerLen = None         # The number of bytes sent with each message indicating the length of the message to follow
-    _maxMsgLen = None         # Integer representing the maximum length of a message we can send or receive
-    _iBuffer = ""             # Partial message received from the remote that require further recv's to complete
-    _iBufferLen = 0           # Length of the message we're currently receiving into self._iBuffer
+    _iBuffer = b""            # Partial message received from the remote that require further recv's to complete
+    _iBufferLen = None        # Length of the message we're currently receiving into self._iBuffer
+    _messageLength = None     # MessageLength object used when constructing _iBufferLen
     _oBuffer = ""             # Partial message sent to the remote that require further send's to complete
     _parentOut = None         # Pipe which our parent process will read from
     _parentIn = None          # Pipe which our parent process will write to
     _usIn = None              # Pipe which we will read from
     _usOut = None             # Pipe which we will write to
+    _closeLock = None         # Mutex to prevent us from closing pipes at the same time
 
-    def __init__(self, conn, maxMsgLen=65536):
+    def __init__(self, conn):
         """
         Creates a new connection, wrapping the given connected socket.
 
-        Inputs: conn             - A connected socket.
-                maxMessageLength - The maximum length of message we will be able to send/receive.
-                                        Default: 65536 (results in 2 byte headers)
+        Inputs: conn - A connected socket.
         """
 
         threading.Thread.__init__(self)
         self.sock = conn
         self.addr = self.sock.getpeername()
+        self._messageLength = MessageLength.MessageLength()
 
         # We cannot run in blocking mode, because at any given time we may be in the process of sending a message to
-        # the remove and receiving a message from the remote.  We cannot get stuck in one or the other.
+        # the remote and receiving a message from the remote.  We cannot get stuck in one phase or the other.
         self.sock.setblocking(0)
-
-        # Set message/header-length restrictions
-        self._maxMsgLen = maxMsgLen
-        self._headerLen = max(1, int(math.ceil(math.log(self._maxMsgLen, 2) / 8)))
 
         # Create two unidirectional pipes for communicating with our parent process
         self._parentIn, self._usOut = multiprocessing.Pipe(False)
         self._usIn, self._parentOut = multiprocessing.Pipe(False)
+
+        self._closeLock = threading.Lock()
 
         # Start processing requests
         self.daemon = True
@@ -80,7 +81,7 @@ class Connection(threading.Thread):
 
     # Data Model functions
     def __repr__(self):
-        return "<Connection [%s]>" % str(self.addr)
+        return "<Stocking (Poll) [%s]>" % str(self.addr)
 
 
     def __enter__(self):
@@ -100,7 +101,7 @@ class Connection(threading.Thread):
         """
 
         if not self.handshakeComplete:
-            raise NotReady()
+            raise notReady.NotReady()
 
         toReturn = self._read()
         if toReturn is not None:
@@ -115,7 +116,7 @@ class Connection(threading.Thread):
         """
 
         if not self.handshakeComplete:
-            raise NotReady()
+            raise notReady.NotReady()
 
         self._write(self.preWrite(*args, **kwargs))
 
@@ -130,7 +131,8 @@ class Connection(threading.Thread):
         """ Kills our connection and immediately halts the thread. """
 
         self.__signalClose()
-        self._parentIn.close()
+        if not self._parentIn.closed:
+            self._parentIn.close()
 
 
     # Subclassable functions
@@ -174,7 +176,7 @@ class Connection(threading.Thread):
         return args[0]
 
 
-    # Internal functions
+    # Visible Internal functions
     def _read(self):
         """
         Function implementing the logic for receiving a message from the remote.
@@ -184,7 +186,7 @@ class Connection(threading.Thread):
         Returns the message received from the remote if there is one, else None.
         """
 
-        if self.active and self._parentIn.poll():
+        if self.active and not self._parentIn.closed and self._parentIn.poll():
             return self._parentIn.recv()
 
 
@@ -195,13 +197,13 @@ class Connection(threading.Thread):
         Should only be called by this object, and only when performing a handshake with the remote.
         """
 
-        if len(msg) > self._maxMsgLen:
-            raise Exception("Length of message to send is greater than maximum message length: %s" % self._maxMsgLen)
-
         if self.active and len(msg):
-            self._parentOut.send(self.__serializeMessageLength(len(msg)) + msg)
+            if type(msg) != bytes:
+                msg = msg.encode('utf8')
+            self._parentOut.send(self._messageLength.serialize(len(msg)) + msg)
 
 
+    # Hidden Internal functions
     def __signalClose(self):
         """
         Should only be called by this thread.  Signals to any parent process polling on self.fileno() that we have closed.
@@ -209,15 +211,21 @@ class Connection(threading.Thread):
         The parent process should still call close to close the other ends of the pipes.
         """
 
-        self.active = False
-        # Only close parentOut; leave parentIn open.  This is because our main loop polls for POLLHUP on parentIn.  If
-        # we close it we won't receive the notification that parentOut has closed, causing it to hang.
-        # Additionally, if we're closing for reasons other than our parent telling us to close, by leaving parentIn open
-        # we allow it to consume any potential remaining messages.
-        self._parentOut.close()
-        self._usOut.close()
-        self._usIn.close()
-        self.sock.close()
+        self._closeLock.acquire()
+        try:
+            if self.active:
+                self.active = False
+                # Only close parentOut; leave parentIn open.  If we're closing for reasons other than our parent telling us to
+                # close, by leaving parentIn open we allow it to consume any potential remaining messages.
+                if not self._parentOut.closed:
+                    self._parentOut.close()
+                if not self._usOut.closed:
+                    self._usOut.close()
+                if not self._usIn.closed:
+                    self._usIn.close()
+                self.sock.close()
+        finally:
+            self._closeLock.release()
 
 
     def __handshake(self):
@@ -239,50 +247,6 @@ class Connection(threading.Thread):
             raise
 
 
-    def __deserializeMessageLength(self, st):
-        """
-        Deserializes the length of a message from a string into an integer.
-
-        Inputs: st - The string containing the serialized length of the message we are to receive.
-
-        Outputs: An integer containing the length of the message we are to receive.
-        """
-
-        length = 0
-        exp = 0
-
-        for char in st:
-            length += (256**exp) * ord(char)
-            exp += 1
-
-        # Because we don't send messages of length 0, that serialization is unused.  To make better use of this we 
-        # subtract the length by one when we serialize.  Account for this when we return the length
-        return length + 1
-
-
-    def __serializeMessageLength(self, length):
-        """
-        Serializes the length of a message to send as a string which can be parsed by the other endpoint.
-
-        Inputs: length - The length (integer) to serialize as a string.
-
-        Outputs: A string format of the length of the message we are to send.
-        """
-
-        st = ""
-
-        # Because we don't send messages of length 0, that serialization is unused.  To make better use of this, subtract
-        # the value we're serializing by one (which will be undone when it is deserialized).
-        length -= 1
-
-        while length:
-            remainder = length % 256
-            length /= 256
-            st += chr(remainder)
-
-        return st.ljust(self._headerLen, '\x00')
-
-
     def __recvMessage(self):
         """
         Attempts to receive a message from our remote endpoint into self._iBuffer.
@@ -293,36 +257,39 @@ class Connection(threading.Thread):
         retval = False
 
         try:
-            # If self._iBufferLen is 0 we need to recv self._headerLen bytes
+            # If self._iBufferLen is 0 we need to recv a completed size header field
             # to determine the length of our next incoming message
-            if not self._iBufferLen:
-                # Attempt to read our message length header from the socket, taking into account any portion of it
-                # already read into self._iBuffer
-                bytesRead = self.sock.recv(self._headerLen - len(self._iBuffer))
-                retval = bool(bytesRead)
+            while not self._iBufferLen:
+                # Attempt to read a byte from the socket
+                byteRead = eintr.run(self.sock.recv, 1)
 
-                # Concatenate what we just read to self._iBuffer
-                self._iBuffer += bytesRead
-
-                # If we have successfully received the entirety of the message length header, move to self._iBufferLen
-                if len(self._iBuffer) == self._headerLen:
-                    self._iBufferLen = self.__deserializeMessageLength(self._iBuffer)
-                    self._iBuffer = ""
-
-                # Otherwise we're not ready to continue receiving the message itself yet
-                else:
+                # If we read no bytes, return False to indicate as such
+                if not byteRead:
                     return retval
 
-            # Attempt to recv our next incoming message into self._iBuffer
-            bytesRead = self.sock.recv(self._iBufferLen - len(self._iBuffer))
-            retval = bool(bytesRead) or retval
-            self._iBuffer += bytesRead
+                # Since we've read a byte, we will return True
+                retval = True
+
+                # Run what we just read through our MessageLength object
+                if self._messageLength.deserialize(byteRead):
+                    # If it returned True, we've received the message size header in its entirety.
+                    self._iBufferLen = self._messageLength.get()
+                    self._messageLength.reset()
+                    break
+
+            while len(self._iBuffer) != self._iBufferLen:
+                # Attempt to recv our next incoming message into self._iBuffer
+                bytesRead = eintr.run(self.sock.recv, self._iBufferLen - len(self._iBuffer))
+                if not bytesRead:
+                    break
+                retval = True
+                self._iBuffer += bytesRead
 
             # If we've completed the message in self._iBuffer, write it to self._usOut so it
             # can be read from self._parentIn by the parent process
             if len(self._iBuffer) == self._iBufferLen:
-                self._usOut.send(self._iBuffer)
-                self._iBuffer = ""
+                self._usOut.send(self._iBuffer.decode('utf8'))
+                self._iBuffer = b""
                 self._iBufferLen = 0
 
         except socket.error as e:
@@ -362,7 +329,6 @@ class Connection(threading.Thread):
 
     # Threading.Thread override
     def run(self):
-        """ Main loop for this Connection. """
 
         try:
             # Start a new thread to handle connecting to the remote
@@ -387,7 +353,7 @@ class Connection(threading.Thread):
                                 return
 
                         # Otherwise check if our parent sent us data
-                        elif self._usIn.fileno() == fd:
+                        elif not self._usIn.closed and self._usIn.fileno() == fd:
                             self.__sendMessage()
 
                     # eventmask will be POLLOUT if we can continue sending data from self._oBuffer
@@ -401,13 +367,12 @@ class Connection(threading.Thread):
         except socket.error as e:
             # Ignore bad file descriptor errors
             if e.errno != errno.EBADF:
-                raise e
+                raise
 
         except select.error as e:
             # Ignore bad file descriptor errors
-            if not hasattr(e, 'args') or not hasattr(e.args, '__iter__') or not len(e.args) or e.args[0] != 9:
-                raise e
+            if not hasattr(e, 'args') or not hasattr(e.args, '__iter__') or not len(e.args) or e.args[0] != errno.EBADF:
+                raise
 
         finally:
             self.__signalClose()
-

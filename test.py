@@ -20,18 +20,19 @@
 """
 
 # Standard imports
-import unittest, socket, time
+import unittest, socket, time, os
+
+os.environ['STOCKING_SELECT_SEND_INTERVAL'] = '0'
 
 # Project imports
-import connection
+import Stockings
 
 SOCKET_IP = 'localhost'
 SOCKET_PORT = 5005
 
-class ConnectionTests(unittest.TestCase):
+class StockingTests(unittest.TestCase):
 
     serverConn = None
-    clientConn = None
     serverSocket = None
 
     # Setup / Teardown functions
@@ -45,13 +46,13 @@ class ConnectionTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.serverSocket.close()
 
-    def setUp(self, maxMsgLen=65536):
+    def setUp(self):
         clientSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         clientSocket.connect((SOCKET_IP, SOCKET_PORT))
         serverSocket = self.serverSocket.accept()[0]
 
-        self.serverConn = connection.Connection(serverSocket, maxMsgLen=maxMsgLen)
-        self.clientConn = connection.Connection(clientSocket, maxMsgLen=maxMsgLen)
+        self.serverConn = self.StockingClass(serverSocket)
+        self.clientConn = self.StockingClass(clientSocket)
 
     def tearDown(self):
         self.serverConn.close()
@@ -72,7 +73,7 @@ class ConnectionTests(unittest.TestCase):
     def testClose(self):
         self.serverConn.close()
 
-        time.sleep(.25)
+        time.sleep(.5)
 
         self.assertFalse(self.serverConn.active)
         self.assertFalse(self.serverConn.isAlive())
@@ -81,9 +82,13 @@ class ConnectionTests(unittest.TestCase):
         self.assertFalse(self.clientConn.isAlive())
 
     def testSerializeMessageLength(self):
+        messageLength = self.clientConn._messageLength
         for val in (1, 50, 128, 255, 256, 1023, 1024, 1025, 65536):
-            self.assertEqual(val, self.clientConn._Connection__deserializeMessageLength(
-                                      self.clientConn._Connection__serializeMessageLength(val)))
+            serialized = messageLength.serialize(val)
+            deserializedSuccessfully = messageLength.deserialize(serialized)
+            self.assertTrue(deserializedSuccessfully)
+            self.assertEqual(val, messageLength.get())
+            messageLength.reset()
 
     def testReadWrite(self):
         while not (self.serverConn.handshakeComplete and self.clientConn.handshakeComplete):
@@ -93,17 +98,14 @@ class ConnectionTests(unittest.TestCase):
         self.assertIsNone(self.serverConn.read())
         self.assertIsNone(self.clientConn.read())
 
-        # Assert we can write messages up to the maximum length'd message allowed
-        msg = 'a' * self.serverConn._maxMsgLen
+        # Try writing some messages
+        msg = 'a' * 2**16
         self.serverConn.write(msg)
         time.sleep(.1)
         self.assertEqual(msg, self.clientConn.read())
 
-        # Assert that attempts to write over the maximum length'd messages allowed raise Exceptions
-        self.assertRaises(Exception, self.serverConn.write, msg + 'a')
-
         self.serverConn.write('test')
-        time.sleep(.1)
+        time.sleep(.5)
         self.assertEqual(self.clientConn.read(), 'test')
 
         self.clientConn.write('a')
@@ -137,12 +139,12 @@ class ConnectionTests(unittest.TestCase):
         self.tearDown()
 
         # Create new connections with larger message lengths
-        self.setUp(maxMsgLen=13000000)
+        self.setUp()
 
         while not (self.serverConn.handshakeComplete and self.clientConn.handshakeComplete):
             pass
 
-        msg = 'a' * self.serverConn._maxMsgLen
+        msg = 'a' * 2**16
         self.serverConn.write(msg)
 
         start = time.time()
@@ -154,7 +156,60 @@ class ConnectionTests(unittest.TestCase):
         self.assertEqual(msg, self.clientConn.read(), msg="Test long message failed; len: %s" % len(msg))
 
 
-if __name__ == '__main__':
+    def testSlowMessageHeaders(self):
+        time.sleep(1)
+
+        # Write a header bypassing the _write function
+        self.clientConn._parentOut.send(b'\x01')
+
+        time.sleep(.1)
+
+        self.assertIsNone(self.serverConn.read())
+        self.assertEqual(self.serverConn._messageLength._completed, False)
+        self.assertEqual(self.serverConn._messageLength._msgLength, 1)
+
+        self.clientConn._parentOut.send(b'\x81')
+
+        time.sleep(.1)
+
+        self.assertEqual(self.serverConn._iBufferLen, 129)
+
+
+    def testFastMessageHeaders(self):
+        time.sleep(1)
+
+        # Write a header bypassing the _write function
+        self.clientConn.write('a' * 256)
+
+        time.sleep(.1)
+
+        self.assertEqual(self.serverConn.read(), 'a' * 256)
+
+
+    def testTwoJoinedMessages(self):
+        # Write a header bypassing the _write function
+        self.clientConn._parentOut.send(b'\x81a\x81b')
+
+        time.sleep(.1)
+
+        # Ensure both messages arrive at the destination
+        self.assertEqual(self.serverConn.read(), 'a')
+        self.assertEqual(self.serverConn.read(), 'b')
+
+
+class PollTests(StockingTests):
+    StockingClass = Stockings.PollStocking
+
+class SelectTests(StockingTests):
+    StockingClass = Stockings.SelectStocking
+
+
+def main():
         loader = unittest.TestLoader()
-        suite = loader.loadTestsFromTestCase(ConnectionTests)
+        pollTests = loader.loadTestsFromTestCase(PollTests)
+        selectTests = loader.loadTestsFromTestCase(SelectTests)
+        suite = unittest.TestSuite([pollTests, selectTests])
         unittest.TextTestRunner().run(suite)
+
+if __name__ == '__main__':
+    main()
