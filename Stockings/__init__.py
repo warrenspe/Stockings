@@ -24,6 +24,7 @@ import select
 # Project imports
 from ._pollStocking import PollStocking
 from ._selectStocking import SelectStocking
+from .exceptions.notReady import NotReady
 
 # Depending on whether or not we have poll support, set the appropriate module as `Stocking`
 Stocking = PollStocking if hasattr(select, 'poll') else SelectStocking
