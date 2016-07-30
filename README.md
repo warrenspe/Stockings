@@ -1,5 +1,7 @@
 # Stockings
-A Windows/Linux/Unix Python 2 & 3 socket wrapper which allows sending/receiving of complete messages.
+A Windows/Linux/Unix, Python 2 & 3 compatible socket wrapper which allows sending/receiving of complete messages.
+
+(Tested on Python Versions 2.7, 3.4, & 3.5)
 
 TCP sockets offer developers the ability to send reliably delivered, ordered, and well-formed packets using sockets.  However one obstacle that developers often face when using them is the need to handle the following case:
 ```
@@ -10,15 +12,13 @@ TCP sockets offer developers the ability to send reliably delivered, ordered, an
 
 In other words, a loop is typically required each time data is sent or received over a TCP socket to ensure complete sending or retrieval of a message.
 
-`Stockings` is a threaded [polling](https://docs.python.org/2/library/select.html#select.poll) class wrapper which allows developers to send complete messages to and from an endpoint, as long as it is also using a Stocking to communicate.  Note that by default, the raw messages sent using Stockings will be prefixed with a header containing the length of the message being sent.  While this is transparent to the programs using Stockings, it means that they should not be used to communicate with endpoints not using a Stocking-wrapped socket.
-
 `Stockings` is a threaded class wrapper which allows developers to send complete messages to and from an endpoint, as long as it is also using a Stocking to communicate.  Note that by default, the raw messages sent using Stockings will be prefixed with a header containing the length of the message being sent.  While this is transparent to the programs using Stockings, it means that they should not be used to communicate with endpoints not using a Stocking-wrapped socket.
 
-There are two flavours to Stockings depending on whether or not the system its running on supports the [select.poll](https://docs.python.org/2/library/select.html#select.poll) construct.  If it does, a PollStocking will be used, utilizing select.poll.  If it doesn't, (like most Windows platforms), a SelectStocking will be used instead, using select.select.  Both provide the same functionality, however SelectStocking is less efficient as it requires the thread to wake up at a certain frequency to check whether or not we have data to send to the endpoint.  This frequency can be configured by setting the environment `STOCKING_SELECT_SEND_INTERVAL`, which should contain the frequency to wake in seconds.
+There are two flavours to Stockings depending on whether or not the system it's running on supports the [select.poll](https://docs.python.org/2/library/select.html#select.poll) construct.  If it does, a PollStocking will be used, utilizing select.poll.  If it doesn't (like most Windows platforms) a SelectStocking will be used instead, using select.select.  Both provide the same functionality, however SelectStocking is less efficient as it requires the thread to wake up at a certain frequency to check whether or not we have data to send to the endpoint.  This frequency can be configured by setting the environment variable `STOCKING_SELECT_SEND_INTERVAL` before creating the stocking, which should contain the frequency to wake in seconds.
 
 Notes:
-    * An endpoint using a PollStocking can communicate with an endpoint using a SelectStocking and vice versa.
-    * The most efficient flavor of Stocking will be available at `Stockings.Stocking`, however both flavors can still be imported directly using `Stockings.SelectStocking` and (assuming that your system supports polling sockets) `Stockings.PollStocking`.
+ * An endpoint using a PollStocking can communicate with an endpoint using a SelectStocking and vice versa.
+ * The most efficient flavor of Stocking will be available as `Stockings.Stocking`, however both flavors can still be imported directly using `Stockings.SelectStocking` and (assuming that your system supports polling sockets) `Stockings.PollStocking`.
 
 
 ## Usage
@@ -104,7 +104,3 @@ class MyStocking(Stockings.Stocking):
         
     return False
 ```
-
-
-
-TESTED ON 3.4, 3.5, 2.7
