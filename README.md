@@ -21,6 +21,15 @@ Notes:
  * The most efficient flavor of Stocking will be available as `Stockings.Stocking`, however both flavors can still be imported directly using `Stockings.SelectStocking` and (assuming that your system supports polling sockets) `Stockings.PollStocking`.
  * The raw messages sent using a Stocking will be prefixed with a header containing the length of the message being sent.  While this is transparent to the programs using Stockings, it means that they should not be used to communicate with endpoints not using a Stocking-wrapped socket.
 
+## Installation
+
+###Using git
+```
+$ git clone https://github.com/warrenspe/Stockings.git
+$ cd Stockings
+$ sudo python3 setup.py install
+```
+
 
 ## Usage
 ### Initialization
