@@ -29,7 +29,8 @@ MASKED_ERRORS = (
     "EAGAIN",
     "WSAEWOULDBLOCK",
     "EWOULDBLOCK",
-    "ENOTSOCK"
+    "ENOTSOCK",
+    "WSAESHUTDOWN"
 )
 
 def recv(sock, bytes):
