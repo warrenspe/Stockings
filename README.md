@@ -1,8 +1,7 @@
-# Connection
-A (linux-only) Python2 socket wrapper.
+# Stockings
+A Windows/Linux/Unix Python 2 & 3 socket wrapper which allows sending/receiving of complete messages.
 
-TCP sockets offer developers the ability to send reliably delivered, ordered, and well-formed packets using sockets.  However one major usability issue that developers often face is the need to manage the sending of data over a TCP socket to handle the following case:
-
+TCP sockets offer developers the ability to send reliably delivered, ordered, and well-formed packets using sockets.  However one obstacle that developers often face when using them is the need to handle the following case:
 ```
 >>> bytesSent = sock.send("Message")
 >>> print "%d, %d" % (bytesSent, len("Message"))
@@ -11,7 +10,7 @@ TCP sockets offer developers the ability to send reliably delivered, ordered, an
 
 In other words, a loop is typically required each time data is sent or received over a TCP socket to ensure complete sending or retrieval of a message.
 
-`Connection` is a threaded [polling](https://docs.python.org/2/library/select.html#select.poll) class wrapper which allows developers to send complete messages to and from an endpoint, as long as it is also using a Connection to communicate.  Note that by default, the raw messages sent using Connection will be prefixed with the length of the message being sent.  While this is transparent to the programs using Connections, it means that they should not be used to communicate with endpoints not using a `Connection` socket wrapper.
+`Stockings` is a threaded [polling](https://docs.python.org/2/library/select.html#select.poll) class wrapper which allows developers to send complete messages to and from an endpoint, as long as it is also using a Connection to communicate.  Note that by default, the raw messages sent using Connection will be prefixed with the length of the message being sent.  While this is transparent to the programs using Connections, it means that they should not be used to communicate with endpoints not using a `Connection` socket wrapper.
 
 ## Usage
 ### Initialization
