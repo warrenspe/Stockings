@@ -34,5 +34,7 @@ distutils.core.setup(
     download_url="https://github.com/warrenspe/%s/tarball/%s" % (NAME, VERSION),
     keywords=['socket', 'message', 'complete', 'wrapper'],
     classifiers=[],
-    packages=['Stockings', 'Stockings.utils', 'Stockings.exceptions']
+    packages=['Stockings', 'Stockings.utils', 'Stockings.exceptions'],
+    license="https://www.gnu.org/licenses/gpl-3.0.html",
+    platforms=["Linux", "Windows"]
 )
