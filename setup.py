@@ -21,7 +21,7 @@
 
 import distutils.core
 
-VERSION = "1.2"
+VERSION = "1.3"
 NAME = "Stockings"
 
 distutils.core.setup(
