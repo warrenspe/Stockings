@@ -1,7 +1,7 @@
 # Stockings
-A Windows/Linux/Unix, Python 2 & 3 compatible socket wrapper which allows sending/receiving of complete messages.
+A Windows/Linux, Python 2 & 3 compatible socket wrapper which allows sending/receiving of complete messages.
 
-(Tested on Python Versions 2.7, 3.4, & 3.5)
+(Tested on Python Versions 2.7, 3.4 on Linux & 2.7, 3.5 on Windows)
 
 TCP sockets offer developers the ability to send reliably delivered, ordered, and well-formed packets using sockets.  However one obstacle that developers often face when using them is the need to handle the following case:
 ```
