@@ -12,13 +12,14 @@ TCP sockets offer developers the ability to send reliably delivered, ordered, an
 
 In other words, a loop is typically required each time data is sent or received over a TCP socket to ensure complete sending or retrieval of a message.
 
-`Stockings` is a threaded class wrapper which allows developers to send complete messages to and from an endpoint, as long as it is also using a Stocking to communicate.  Note that by default, the raw messages sent using Stockings will be prefixed with a header containing the length of the message being sent.  While this is transparent to the programs using Stockings, it means that they should not be used to communicate with endpoints not using a Stocking-wrapped socket.
+`Stockings` is a threaded class wrapper which allows developers to send complete messages to and from an endpoint, as long as it is also using a Stocking to communicate.
 
 There are two flavours to Stockings depending on whether or not the system it's running on supports the [select.poll](https://docs.python.org/2/library/select.html#select.poll) construct.  If it does, a PollStocking will be used, utilizing select.poll.  If it doesn't (like most Windows platforms) a SelectStocking will be used instead, using select.select.  Both provide the same functionality, however SelectStocking is less efficient as it requires the thread to wake up at a certain frequency to check whether or not we have data to send to the endpoint.  This frequency can be configured by setting the environment variable `STOCKING_SELECT_SEND_INTERVAL` before creating the stocking, which should contain the frequency to wake in seconds.
 
 Notes:
  * An endpoint using a PollStocking can communicate with an endpoint using a SelectStocking and vice versa.
  * The most efficient flavor of Stocking will be available as `Stockings.Stocking`, however both flavors can still be imported directly using `Stockings.SelectStocking` and (assuming that your system supports polling sockets) `Stockings.PollStocking`.
+ * The raw messages sent using a Stocking will be prefixed with a header containing the length of the message being sent.  While this is transparent to the programs using Stockings, it means that they should not be used to communicate with endpoints not using a Stocking-wrapped socket.
 
 
 ## Usage
@@ -52,7 +53,7 @@ On the other end, the endpoint's `Stocking` has a `read` function (accepting no 
 Subclasses of `Stocking` can override the following functions to modify functionality:
 
 #### preWrite
-`Stocking.write` can accept any number of positional arguments and keyword arguments.  These will be passed to `Stocking.preWrite`, and then the result of that function will be sent to the endpoint.  `Stocking.preWrite` is expected to return a string.  By default, `Stocking.preWrite` returns the first positional argument passed (to allow `Stocking.write("Test Message")` to work).  However, preWrite can be overridden to format the string to send.  For example
+`Stocking.write` can accept any number of positional arguments and keyword arguments.  All of which will be passed to `Stocking.preWrite`, and then the result of that function will be sent to the endpoint.  `Stocking.preWrite` is expected to return a string.  By default, `Stocking.preWrite` returns the first positional argument passed (to allow `Stocking.write("Test Message")` to work).  However, preWrite can be overridden to format the string to send.  For example
 
 ```
 class MyStocking(Stockings.Stocking):
