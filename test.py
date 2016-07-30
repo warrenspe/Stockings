@@ -79,14 +79,45 @@ class StockingTests(unittest.TestCase):
         self.assertFalse(self.serverConn.active)
         self.assertFalse(self.clientConn.active)
 
-    def testSerializeMessageLength(self):
-        messageLength = self.clientConn._messageLength
-        for val in (1, 50, 128, 255, 256, 1023, 1024, 1025, 65536):
-            serialized = messageLength.serialize(val)
-            deserializedSuccessfully = messageLength.deserialize(serialized)
+    def testSerializemessageHeaders(self):
+        messageHeaders = self.clientConn._messageHeaders
+        for length in (1, 50, 128, 255, 256, 1023, 1024, 1025, 65536):
+            for typ in "bytes", "unicode":
+                val = "a" * length
+                if typ == "unicode":
+                    if str == bytes:
+                        val = unicode(val)
+                else:
+                    if str != bytes:
+                        val = bytes(val, 'ascii')
+
+            typ = type(val)
+            length = len(val)
+            if type(val) != bytes:
+                val2 = val.encode('utf8')
+                length = len(val2)
+
+            serialized = messageHeaders.serialize(typ, length)
+            deserializedSuccessfully = messageHeaders.deserialize(serialized)
             self.assertTrue(deserializedSuccessfully)
-            self.assertEqual(val, messageLength.get())
-            messageLength.reset()
+            self.assertEqual(len(val), messageHeaders.getLength())
+            self.assertEqual(messageHeaders.getType(), (messageHeaders.BYTES if typ == "bytes" else messageHeaders.UNICODE))
+            messageHeaders.reset()
+
+    def testSendType(self):
+        time.sleep(.1)
+
+        self.serverConn.write("a")
+        time.sleep(.5)
+        self.assertEqual(type(self.clientConn.read()), type("a"))
+        try:
+            self.serverConn.write(unicode('a'))
+            time.sleep(.5)
+            self.assertEqual(type(self.clientConn.read()), unicode)
+        except NameError:
+            self.serverConn.write(b'a')
+            time.sleep(.5)
+            self.assertEqual(type(self.clientConn.read()), bytes)
 
     def testReadWrite(self):
         while not (self.serverConn.handshakeComplete and self.clientConn.handshakeComplete):
@@ -163,14 +194,14 @@ class StockingTests(unittest.TestCase):
         time.sleep(.1)
 
         self.assertIsNone(self.serverConn.read())
-        self.assertEqual(self.serverConn._messageLength._completed, False)
-        self.assertEqual(self.serverConn._messageLength._msgLength, 1)
+        self.assertEqual(self.serverConn._messageHeaders._completed, False)
+        self.assertEqual(self.serverConn._messageHeaders._msgLength, 1)
 
         self.clientConn._parentOut.send(b'\x81')
 
         time.sleep(.1)
 
-        self.assertEqual(self.serverConn._iBufferLen, 129)
+        self.assertEqual(self.serverConn._iBufferLen, 65)
 
 
     def testFastMessageHeaders(self):

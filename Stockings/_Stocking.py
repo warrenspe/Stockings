@@ -23,7 +23,7 @@
 import socket, errno, threading, multiprocessing
 
 # Project imports
-from .utils import MessageLength, eintr
+from .utils import MessageHeaders, eintr
 from .exceptions import notReady
 
 class _Stocking(threading.Thread):
@@ -38,7 +38,8 @@ class _Stocking(threading.Thread):
     # Internal attributes
     _iBuffer = b""            # Partial message received from the remote that require further recv's to complete
     _iBufferLen = 0           # Length of the message we're currently receiving into self._iBuffer
-    _messageLength = None     # MessageLength object used when constructing _iBufferLen
+    _iType = None             # Type of message that we're receiving (bytes vs string/unicode)
+    _messageHeaders = None    # MessageHeaders object used when constructing _iBufferLen
     _oBuffer = ""             # Partial message sent to the remote that require further send's to complete
     _parentOut = None         # Pipe which our parent process will read from
     _parentIn = None          # Pipe which our parent process will write to
@@ -56,7 +57,7 @@ class _Stocking(threading.Thread):
         threading.Thread.__init__(self)
         self.sock = conn
         self.addr = self.sock.getpeername()
-        self._messageLength = MessageLength.MessageLength()
+        self._messageHeaders = MessageHeaders.MessageHeaders()
 
         # We cannot run in blocking mode, because at any given time we may be in the process of sending a message to
         # the remote and receiving a message from the remote.  We cannot get stuck in one phase or the other.
@@ -194,10 +195,11 @@ class _Stocking(threading.Thread):
         """
 
         if len(msg):
+            typ = type(msg)
             if type(msg) != bytes:
                 msg = msg.encode('utf8')
 
-            msg = self._messageLength.serialize(len(msg)) + msg
+            msg = self._messageHeaders.serialize(typ, len(msg)) + msg
 
             if not self._parentOut.closed:
                 self._parentOut.send(msg)
@@ -299,11 +301,12 @@ class _Stocking(threading.Thread):
                 # Since we've read a byte, we will return True
                 retval = True
 
-                # Run what we just read through our MessageLength object
-                if self._messageLength.deserialize(byteRead):
+                # Run what we just read through our MessageHeaders object
+                if self._messageHeaders.deserialize(byteRead):
                     # If it returned True, we've received the message size header in its entirety.
-                    self._iBufferLen = self._messageLength.get()
-                    self._messageLength.reset()
+                    self._iBufferLen = self._messageHeaders.getLength()
+                    self._iType = self._messageHeaders.getType()
+                    self._messageHeaders.reset()
                     break
 
             while len(self._iBuffer) != self._iBufferLen:
@@ -317,8 +320,10 @@ class _Stocking(threading.Thread):
             # If we've completed the message in self._iBuffer, write it to self._usOut so it
             # can be read from self._parentIn by the parent process
             if len(self._iBuffer) == self._iBufferLen:
+                if self._iType == self._messageHeaders.UNICODE:
+                    self._iBuffer = self._iBuffer.decode('utf8')
                 if not self._usOut.closed:
-                    self._usOut.send(self._iBuffer.decode('utf8'))
+                    self._usOut.send(self._iBuffer)
                 self._iBuffer = b""
                 self._iBufferLen = 0
 
