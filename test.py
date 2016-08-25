@@ -71,6 +71,11 @@ class StockingTests(unittest.TestCase):
         self.assertTrue(self.clientConn.isAlive())
         self.assertTrue(self.clientConn.handshakeComplete)
 
+
+    def testQuickClose(self):
+        return
+
+
     def testClose(self):
         self.serverConn.close()
 

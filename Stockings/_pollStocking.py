@@ -93,8 +93,8 @@ class PollStocking(_Stocking):
                         return
 
         except socket.error as e:
-            # Ignore bad file descriptor errors
-            if e.errno != errno.EBADF:
+            # Ignore bad file descriptor & connection reset/abort errors
+            if e.errno not in (errno.EBADF, errno.ECONNRESET, errno.ECONNABORTED):
                 raise
 
         except select.error as e:
