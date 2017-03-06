@@ -94,6 +94,8 @@ class MyStocking(Stockings.Stocking):
 #### handshake
 `Stocking.handshake` is a function which will be called upon initialization of a Stocking.  This function should return True if the handshake was a success, else False.  By default, it simply returns True.  This function will be executed in its own thread and should accept no arguments.  It should interact with the remote by using `self._write` and `self._read` (Note that these bypass preWrite & postRead but in all other ways act like the default read & write functions).  `self._write` accepts a single string argument which will be sent to the remote in its entirety, and `self._read` accepts no arguments and returns either None, or a complete message from the remote.
 
+The attribute `handshakeComplete` will be set to the return value of this function.
+
 Note that the thread which runs this function does not run as a daemon, and as such if looping is involved it should be aware of self.active.
 
 Finally, use of the Stocking by the process that created it will raise a Stockings.NotReady exception until the handshake completes.
