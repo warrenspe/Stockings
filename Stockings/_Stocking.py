@@ -134,6 +134,12 @@ class _Stocking(threading.Thread):
         self._runLocked(__close, self)
 
 
+    def writeDataQueued(self):
+        """ Returns a boolean indicating whether or not there is data waiting to be sent to the endpoint."""
+
+        return self._usIn.poll() or len(self._oBuffer)
+
+
     # Subclassable functions
     def handshake(self):
         """

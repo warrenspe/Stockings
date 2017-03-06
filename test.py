@@ -129,12 +129,14 @@ class StockingTests(unittest.TestCase):
             pass
 
         # Assert None's are read when there's no data to read
+        self.assertFalse(self.serverConn.writeDataQueued())
         self.assertIsNone(self.serverConn.read())
         self.assertIsNone(self.clientConn.read())
 
         # Try writing some messages
         msg = 'a' * 2**16
         self.serverConn.write(msg)
+        self.assertTrue(self.serverConn.writeDataQueued())
         time.sleep(.1)
         self.assertEqual(msg, self.clientConn.read())
 
