@@ -12,7 +12,7 @@ TCP sockets offer developers the ability to send reliably delivered, ordered, an
 
 In other words, a loop is typically required each time data is sent or received over a TCP socket to ensure complete sending or retrieval of a message.
 
-`Stockings` is a threaded class wrapper which allows developers to send complete messages to and from an endpoint, as long as it is also using a Stocking to communicate.
+`Stockings` is a threaded socket wrapper which allows developers to send complete messages to and from an endpoint, as long as it is also using a Stocking to communicate.
 
 There are two flavours to Stockings depending on whether or not the system it's running on supports the [select.poll](https://docs.python.org/2/library/select.html#select.poll) construct.  If it does, a PollStocking will be used, utilizing select.poll.  If it doesn't (like most Windows platforms) a SelectStocking will be used instead, using select.select.  Both provide the same functionality, however SelectStocking is less efficient as it requires the thread to wake up at a certain frequency to check whether or not we have data to send to the endpoint.  This frequency can be configured by setting the environment variable `STOCKING_SELECT_SEND_INTERVAL` before creating the stocking, which should contain the frequency to wake in seconds.
 
@@ -23,7 +23,12 @@ Notes:
 
 ## Installation
 
-###Using git
+### Using pip
+```
+pip install stockings
+```
+
+### Using git
 ```
 $ git clone https://github.com/warrenspe/Stockings.git
 $ cd Stockings
@@ -41,22 +46,43 @@ The `Stocking` class accepts a single argument, a connected socket object.  To t
 >>> sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 >>> sock.connect(('127.0.0.1', 1234))
 >>>
->>> stock = Stockings.Stocking(sock)
+>>> stocking = Stockings.Stocking(sock)
 ```
 
-### Sending & Receiving Messages
+### API Instance Attributes
+`Stocking.sock` refers to the passed socket
+
+`Stocking.addr` refers to the address of the remote endpoint, as returned by [getpeername](https://docs.python.org/2/library/socket.html#socket.socket.getpeername)
+
+`Stocking.handshakeComplete` refers to the return value of the handshake function (see below)
+
+`Stocking.active` indicates whether this stocking is currently polling or not
+
+### API Functions
+
+#### Sending & Receiving Messages
 `Stocking` wrappers have a `write` function which by default accepts a single string to send to the endpoint in it's entirety.
 
 On the other end, the endpoint's `Stocking` has a `read` function (accepting no arguments) which will return None until the string sent by the other endpoint has been received in its entirety.
 
 ```
->>> stock1.write("Test Message")
+>>> stocking1.write("Test Message")
 ```
 
 ```
->>> stock2.read()
+>>> stocking2.read()
 "Test Message"
 ```
+
+#### Unique fileno
+`Stocking` wrappers can be uniquely identified by the fileno of the pipe which it reads input from (data to be written to the remote).
+This fileno can be accessed through its `Stocking.fileno()` function.
+
+#### Checking busyness
+`Stocking` wrappers can be polled to see if they currently have data which they are trying to send to the remote by using their `Stocking.writeDataQueued()` function.  This function returns a boolean indicating whether or not the wrapper has any bytes which are pending to be sent to the remote.
+
+#### Close
+`Stocking` wrappers can be closed using their `Stocking.close()` function.  Note that this signals to the underlying thread to close; it does not necessarily kill it immediately.  After calling close, the status of the wrapper can be checked by reading its `Stocking.active` attribute.  Note that stockings can be opened using the [with](https://docs.python.org/2/reference/compound_stmts.html#the-with-statement) context, which will automatically close them when the context exits.
 
 ### Extending
 Subclasses of `Stocking` can override the following functions to modify functionality:
