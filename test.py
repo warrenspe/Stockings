@@ -136,7 +136,6 @@ class StockingTests(unittest.TestCase):
         # Try writing some messages
         msg = 'a' * 2**16
         self.serverConn.write(msg)
-        self.assertTrue(self.serverConn.writeDataQueued())
         time.sleep(.1)
         self.assertEqual(msg, self.clientConn.read())
 
@@ -154,10 +153,10 @@ class StockingTests(unittest.TestCase):
         self.assertEqual(self.serverConn.read(), 'a')
         self.assertEqual(self.serverConn.read(), 'd')
 
-        for i in range(5000):
+        for i in range(500):
             self.clientConn.write(str(i))
 
-        for i in range(5000):
+        for i in range(500):
             read = None
             while read is None:
                 read = self.serverConn.read()
